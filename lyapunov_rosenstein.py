@@ -1,19 +1,22 @@
 """
 Python code to determine the largest Lyapunov exponent
 using Rosenstein's algorithm: https://www.sciencedirect.com/science/article/abs/pii/016727899390009P
-
-Author: Gabriel G. Carvalho
 """
 
+import math
 import numpy as np
 import seaborn as sns
 from scipy.signal import welch
 import matplotlib.pyplot as plt
 from scipy.signal import periodogram
+from sklearn.metrics.pairwise import euclidean_distances as dist
+
+import GP_algorithm as gp
 
 sns.set_theme()
 
-def distance(xe: np.array, xi:np.array)->float:
+
+def distance(xe: np.array, xi: np.array) -> float:
     """Euclidean distance between two position
     vectors, xe and xi.
 
@@ -33,7 +36,9 @@ def distance(xe: np.array, xi:np.array)->float:
     return np.sqrt(np.sum((xi - xe) ** 2))
 
 
-def get_nearest_neighbour(xi:np.array, X:np.ndarray, mu:float, time_steps:int)->int:
+def get_nearest_neighbour(
+    xi: np.array, X: np.ndarray, mu: float, time_steps: int
+) -> int:
     """Get the nearest neighbour of xi in X excluding
     itself, and vectors whose distances are less than mu.
     The trajectories of both xi and its nearest neighbour
@@ -65,7 +70,8 @@ def get_nearest_neighbour(xi:np.array, X:np.ndarray, mu:float, time_steps:int)->
 
     return np.argmin(ds)
 
-def get_nearest_neighbours(X:np.ndarray, mu:float, time_steps:int)->list:
+
+def get_nearest_neighbours(X: np.ndarray, mu: float, time_steps: int) -> list:
     """Creates a list whose i-th element is the index in X of
     the neares neighbour of X[i,].
 
@@ -87,7 +93,7 @@ def get_nearest_neighbours(X:np.ndarray, mu:float, time_steps:int)->list:
     return [get_nearest_neighbour(xi, X, mu, time_steps) for xi in X]
 
 
-def mp_welch(ts:np.array)->float:
+def mp_welch(ts: np.array) -> float:
     """Gets the mean periodo o ts
     using welch method.
 
@@ -107,7 +113,8 @@ def mp_welch(ts:np.array)->float:
     mean_frequency = np.average(f, weights=w)
     return 1 / mean_frequency
 
-def mp_periodogram(ts:np.array)->float:
+
+def mp_periodogram(ts: np.array) -> float:
     """Gets the mean periodo o ts
     using periodogram method.
 
@@ -127,7 +134,8 @@ def mp_periodogram(ts:np.array)->float:
     mean_frequency = np.average(f, weights=w)
     return 1 / mean_frequency
 
-def expected_log_distance(i:int, X:np.ndarray, j:list)->float:
+
+def expected_log_distance(i: int, X: np.ndarray, j: list) -> float:
     """Calculates the average of log distance at time i.
 
     Parameters
@@ -148,15 +156,17 @@ def expected_log_distance(i:int, X:np.ndarray, j:list)->float:
     d_ji = np.array([distance(X[j[k] + i], X[k + i]) for k in range(len(X) - i)])
     return np.mean(np.log(d_ji))
 
-def main(ts_path: str,
-        lag: int,
-        emb_dim: int,
-        t_0: int,
-        t_f: int,
-        delta_t: float,
-        method: str,
-        show: bool
-)->float:
+
+def main(
+    ts_path: str,
+    lag: int,
+    emb_dim: int,
+    t_0: int,
+    t_f: int,
+    delta_t: float,
+    method: str,
+    show: bool,
+) -> float:
     """Estimate the largest Lyapunov exponent
     using Rosenstein's algorithm.
 
@@ -189,9 +199,9 @@ def main(ts_path: str,
     x_obs = np.load(ts_path)
 
     # Mean period
-    if method=='welch':
+    if method == "welch":
         mu = mp_welch(x_obs)
-    elif method=='periodogram':
+    elif method == "periodogram":
         mu = mp_periodogram(x_obs)
     else:
         raise NotImplementedError
@@ -201,20 +211,25 @@ def main(ts_path: str,
     m = emb_dim
 
     N = len(x_obs)
-    M = N - (m-1)*J
-    X = np.empty((M,m))
+    M = N - (m - 1) * J
+    X = np.empty((M, m))
+
+    # Fractal Dimension
+    D = gp.grassberg_procaccia(x_obs, m, J, plot=False)
 
     # Reconstruct the atractor from one time-series
     for i in range(M):
-        idx = np.arange(i, i+(m-1)*J+1, J)
-        X[i: ] = x_obs[idx]
+        idx = np.arange(i, i + (m - 1) * J + 1, J)
+        X[i:] = x_obs[idx]
 
     t_init = t_0
     t_end = t_f
 
     j = get_nearest_neighbours(X, mu=mu, time_steps=t_end)
 
-    mean_log_distance = np.array([expected_log_distance(i, X, j) for i in range(t_init, t_end)])
+    mean_log_distance = np.array(
+        [expected_log_distance(i, X, j) for i in range(t_init, t_end)]
+    )
 
     deltaT = delta_t
 
@@ -225,24 +240,28 @@ def main(ts_path: str,
     m, c = np.linalg.lstsq(A, mean_log_distance, rcond=None)[0]
 
     if show:
-        _ = plt.plot(time, mean_log_distance, label='Average divergence', color='#800080')
-        plt.xlabel('Time')
-        plt.ylabel('< ln (divergence) >')
-        _ = plt.plot(time, m*time + c, '--', label='Fitted line', color='#ff1493')
+        _ = plt.plot(
+            time, mean_log_distance, label="Average divergence", color="#800080"
+        )
+        plt.xlabel("Time")
+        plt.ylabel("< ln (divergence) >")
+        _ = plt.plot(time, m * time + c, "--", label="Fitted line", color="#ff1493")
         _ = plt.legend()
         plt.show()
 
-    return m
+    return m, D
 
-if __name__=='__main__':
-    lle = main(ts_path='lorenz.npy',
-               lag=11,
-               emb_dim=9,
-               t_0=60,
-               t_f=160,
-               delta_t=0.01,
-               method='welch',
-               show=True
-            )
 
-    print(f'Largest Lyapunov exponent = {lle}')
+if __name__ == "__main__":
+    lle, cd = main(
+        ts_path="lorenz.npy",
+        lag=11,
+        emb_dim=9,
+        t_0=80,
+        t_f=150,
+        delta_t=0.01,
+        method="welch",
+        show=True,
+    )
+
+    print(f"Largest Lyapunov exponent = {lle}\nCorr. Dim = {cd}")
