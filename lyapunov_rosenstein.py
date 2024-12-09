@@ -3,15 +3,14 @@ Python code to determine the largest Lyapunov exponent
 using Rosenstein's algorithm: https://www.sciencedirect.com/science/article/abs/pii/016727899390009P
 """
 
-import math
 import numpy as np
 import seaborn as sns
 from scipy.signal import welch
 import matplotlib.pyplot as plt
 from scipy.signal import periodogram
-from sklearn.metrics.pairwise import euclidean_distances as dist
+from scipy.spatial.distance import pdist, squareform
 
-import GP_algorithm as gp
+import tqdm
 
 sns.set_theme()
 
@@ -37,7 +36,7 @@ def distance(xe: np.array, xi: np.array) -> float:
 
 
 def get_nearest_neighbour(
-    xi: np.array, X: np.ndarray, mu: float, time_steps: int
+    i: int, X: np.ndarray, mu: float, time_steps: int, Xdist: np.ndarray
 ) -> int:
     """Get the nearest neighbour of xi in X excluding
     itself, and vectors whose distances are less than mu.
@@ -46,14 +45,16 @@ def get_nearest_neighbour(
 
     Parameters
     ----------
-    xi : np.array
-        Position vector.
+    i : int
+        Index of the target vector xi.
     X : np.ndarray
         Reconstructed attractor.
     mu : float
         Mean period of the orbits of X.
     time_steps : int
         Length of the trajectory.
+    Xdist: np.ndarray
+        Distance matrix of X.
 
     Returns
     -------
@@ -62,35 +63,13 @@ def get_nearest_neighbour(
     """
 
     xes = np.arange(len(X) - time_steps)
-    ds = np.array([distance(X[xe], xi) for xe in xes])
+    ds = Xdist[i,:len(xes)].ravel()
     ds = np.where(ds == 0, np.inf, ds)
-    index = np.where((X == xi).all(axis=1))[0][0]
+    index = np.where((X == X[i]).all(axis=1))[0][0]
     xes_aux = np.abs(xes - index)
     ds = np.where(xes_aux < mu, np.inf, ds)
 
     return np.argmin(ds)
-
-
-def get_nearest_neighbours(X: np.ndarray, mu: float, time_steps: int) -> list:
-    """Creates a list whose i-th element is the index in X of
-    the neares neighbour of X[i,].
-
-    Parameters
-    ----------
-    X : np.ndarray
-        Reconstructed attractor.
-    mu : float
-        Mean period.
-    time_steps : int
-        Length of the trajectory.
-
-    Returns
-    -------
-    list
-        List of nearest neighbours for each state in X.
-    """
-
-    return [get_nearest_neighbour(xi, X, mu, time_steps) for xi in X]
 
 
 def mp_welch(ts: np.array) -> float:
@@ -214,9 +193,6 @@ def main(
     M = N - (m - 1) * J
     X = np.empty((M, m))
 
-    # Fractal Dimension
-    D = gp.grassberg_procaccia(x_obs, m, J, plot=False)
-
     # Reconstruct the atractor from one time-series
     for i in range(M):
         idx = np.arange(i, i + (m - 1) * J + 1, J)
@@ -225,7 +201,11 @@ def main(
     t_init = t_0
     t_end = t_f
 
-    j = get_nearest_neighbours(X, mu=mu, time_steps=t_end)
+    Xdist = squareform(pdist(X))
+
+    j = []
+    for i in tqdm.tqdm(range(len(X))):
+        j.append(get_nearest_neighbour(i, X, mu, t_end, Xdist).item())
 
     mean_log_distance = np.array(
         [expected_log_distance(i, X, j) for i in range(t_init, t_end)]
@@ -249,11 +229,11 @@ def main(
         _ = plt.legend()
         plt.show()
 
-    return m, D
+    return m
 
 
 if __name__ == "__main__":
-    lle, cd = main(
+    lle = main(
         ts_path="lorenz.npy",
         lag=11,
         emb_dim=9,
@@ -264,4 +244,4 @@ if __name__ == "__main__":
         show=True,
     )
 
-    print(f"Largest Lyapunov exponent = {lle}\nCorr. Dim = {cd}")
+    print(f"Largest Lyapunov exponent = {lle}")
